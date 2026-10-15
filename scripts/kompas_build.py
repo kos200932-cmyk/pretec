@@ -173,7 +173,9 @@ def build_blank(b, prof):
     """Заготовка: вращение контура между сферами R_in/R_out и конусами c_a, c_b."""
     r_in, r_out = prof["r_in"], prof["r_out"]
     ca, cb = (math.radians(prof["blank"][k]) for k in ("c_a_deg", "c_b_deg"))
-    fz = -1.0 if b.o.flip_z else 1.0
+    # В КОМПАС-3D v24 на плоскости XOZ локальная ось y смотрит в -Z (подтверждено по модели
+    # пользователя: без инверсии заготовка строилась ниже плоскости XOY).
+    fz = 1.0 if b.o.flip_z else -1.0
 
     def pt(r, c):                                     # (радиус от оси, высота вдоль оси)
         return (r * math.sin(c), fz * r * math.cos(c))
@@ -286,7 +288,8 @@ def main(argv=None):
     ap.add_argument("--tilt-sign", type=int, choices=(-1, 1), default=1,
                     help="-1, если плоскости сечений наклонились не в ту сторону")
     ap.add_argument("--flip-x", action="store_true", help="зеркально по локальной оси x эскиза сечений")
-    ap.add_argument("--flip-z", action="store_true", help="поменять знак высоты в эскизе заготовки")
+    ap.add_argument("--flip-z", action="store_true",
+                    help="вернуть исходную ориентацию эскиза заготовки (по умолчанию учтено, что на XOZ ось y = -Z)")
     ap.add_argument("--origin", choices=("projection", "axis"), default="projection",
                     help="где у КОМПАС начало эскиза на наклонной плоскости; 'axis' -- на пересечении с осью Z "
                          "(пробуйте, если вырез оказался выше заготовки)")
