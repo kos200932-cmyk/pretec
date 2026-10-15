@@ -241,7 +241,13 @@ def build_pattern(b, prof, cut):
     e = b.part.NewEntity(const(b.c, "o3d_circularCopy"))
     d = e.GetDefinition()
     d.SetAxis(b.default("o3d_axisOZ"))
-    d.SetCopyParamAlongDir(prof["z"], 360.0 / prof["z"], True, False)
+    n = prof["z"]
+    # factor=False: угол задан между соседними экземплярами (360/n).
+    # factor=True: угол задан между крайними экземплярами (360*(n-1)/n). По скриншоту из КОМПАС v24
+    # вызов с factor=True включал именно режим «между крайними», поэтому по умолчанию False.
+    factor = bool(b.o.pattern_factor)
+    step = 360.0 * (n - 1) / n if factor else 360.0 / n
+    d.SetCopyParamAlongDir(n, step, factor, False)
     d.GetOperationArray().Add(cut)
     b._create(e, "Массив впадин")
     return e
@@ -290,6 +296,9 @@ def main(argv=None):
     ap.add_argument("--flip-x", action="store_true", help="зеркально по локальной оси x эскиза сечений")
     ap.add_argument("--flip-z", action="store_true",
                     help="вернуть исходную ориентацию эскиза заготовки (по умолчанию учтено, что на XOZ ось y = -Z)")
+    ap.add_argument("--pattern-factor", type=int, choices=(0, 1), default=0,
+                    help="параметр factor кругового массива: 0 -- угол между соседними экземплярами (по умолчанию), "
+                         "1 -- между крайними (шаг пересчитывается в 360*(n-1)/n)")
     ap.add_argument("--origin", choices=("projection", "axis"), default="projection",
                     help="где у КОМПАС начало эскиза на наклонной плоскости; 'axis' -- на пересечении с осью Z "
                          "(пробуйте, если вырез оказался выше заготовки)")
