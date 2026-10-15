@@ -210,11 +210,20 @@ def gap_planes(b, prof):
 def build_gap(b, prof):
     xy = prof["gap"]["unit_xy"]
     sx = -1.0 if b.o.flip_x else 1.0
+    delta = math.radians(prof["delta_deg"])
+    # origin == "projection": начало эскиза -- проекция начала координат на плоскость сечения
+    # origin == "axis": начало эскиза -- точка пересечения плоскости с осью Z; тогда центр
+    #                   сечения смещён от начала эскиза на h*tg(delta) вдоль локальной оси x
+    shift = math.tan(delta) if b.o.origin == "axis" else 0.0
+    print()
     pa, pb = gap_planes(b, prof)
     sketches = []
     for plane, h, label in ((pa, prof["gap"]["h_a"], "Контур впадины A"),
                             (pb, prof["gap"]["h_b"], "Контур впадины B")):
-        pts = [(sx * x * h, y * h) for x, y in xy]
+        c = (h * math.sin(delta), 0.0, h * math.cos(delta))
+        print("    %s: центр сечения должен быть в точке X=%.3f Y=0 Z=%.3f мм (плоскость пересекает ось Z в Z=%.3f)" %
+              (label, c[0], c[2], h / math.cos(delta)))
+        pts = [(sx * h * (x + shift), y * h) for x, y in xy]
         sketches.append(b.sketch(plane, label, lambda d, pts=pts: b.polyline(d, pts)))
     e = b.part.NewEntity(const(b.c, "o3d_cutLoft"))
     d = e.GetDefinition()
@@ -278,6 +287,9 @@ def main(argv=None):
                     help="-1, если плоскости сечений наклонились не в ту сторону")
     ap.add_argument("--flip-x", action="store_true", help="зеркально по локальной оси x эскиза сечений")
     ap.add_argument("--flip-z", action="store_true", help="поменять знак высоты в эскизе заготовки")
+    ap.add_argument("--origin", choices=("projection", "axis"), default="projection",
+                    help="где у КОМПАС начало эскиза на наклонной плоскости; 'axis' -- на пересечении с осью Z "
+                         "(пробуйте, если вырез оказался выше заготовки)")
     opts = ap.parse_args(argv)
 
     if opts.diag:
