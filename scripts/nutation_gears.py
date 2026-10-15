@@ -109,7 +109,11 @@ def make_outline(z, delta, alpha, ha_ang, hf_ang, internal,
     c = np.tile(c_t, z)
     if not np.all(np.diff(az) > 0):
         raise ValueError("контур зуба неоднозначен по азимуту (подрез?)")
-    return dict(az=az, c=c, gb=gb, a_p=a_p, c_tip=c_tip, c_root=c_root, internal=internal)
+    # впадина между зубом 0 и зубом 1, центрированная на азимуте 0 (от вершины до вершины)
+    gap_az = np.concatenate([az_r, root, az_l + pitch]) - pitch / 2.0
+    gap_c = np.concatenate([c_r, np.full(n_root, c_root), c_l])
+    return dict(az=az, c=c, gb=gb, a_p=a_p, c_tip=c_tip, c_root=c_root, internal=internal,
+                gap_az=gap_az, gap_c=gap_c, pitch=pitch)
 
 
 # ----------------------------------------------------------------- тело венца
@@ -195,6 +199,57 @@ def check_meshing(z_w, z_s, theta, W, S, c_rim, c_bore, r_out, n_steps=90):
     return max(pen_w, 0.0) * r_out * 1e3, max(pen_s, 0.0) * r_out * 1e3
 
 
+# ------------------------------------------------- данные для скрипта КОМПАС-3D
+def gap_section(P, delta, c_open_shift):
+    """Контур впадины (замкнутый) в плоскости, перпендикулярной образующей
+    делительного конуса, на расстоянии 1 от вершины O вдоль образующей.
+    Образующая лежит в плоскости XZ: g = (sin d, 0, cos d). Локальные оси плоскости:
+    e1 = (cos d, 0, -sin d), e2 = (0, 1, 0). Сечение на расстоянии h -- это то же
+    самое, умноженное на h (все ребра проходят через O)."""
+    az, c = P['gap_az'], P['gap_c']
+    c_open = P['c_tip'] + c_open_shift
+    az = np.concatenate([az, [az[-1], az[0]]])             # замыкание со стороны открытого края
+    c = np.concatenate([c, [c_open, c_open]])
+    u = sph(az, c)
+    g = np.array([np.sin(delta), 0.0, np.cos(delta)])
+    e1 = np.array([np.cos(delta), 0.0, -np.sin(delta)])
+    e2 = np.array([0.0, 1.0, 0.0])
+    k = u @ g
+    if k.min() < 0.3:
+        raise ValueError("контур впадины слишком далёк от образующей для плоского сечения")
+    p = u / k[:, None]
+    return np.stack([p @ e1, p @ e2], axis=1)
+
+
+def kompas_part(name, kind, z, delta, P, r_in, r_out, c_a, c_b):
+    shift = 0.08 if kind == 'external' else -0.08
+    xy = gap_section(P, delta, shift)
+    return dict(
+        name=name, kind=kind, z=int(z), delta_deg=float(np.degrees(delta)),
+        pitch_deg=float(np.degrees(P['pitch'])),
+        gap_center_az_deg=float(np.degrees(P['pitch'] / 2.0)),   # азимут центра впадины в STL
+        r_in=float(r_in), r_out=float(r_out),
+        blank=dict(c_a_deg=float(np.degrees(c_a)), c_b_deg=float(np.degrees(c_b))),
+        gap=dict(h_a=float(0.8 * r_in), h_b=float(1.15 * r_out), unit_xy=xy.round(9).tolist()),
+    )
+
+
+def check_gap_section(P, delta, part):
+    """Обратное преобразование точек контура в (азимут, колатитюд): ошибка относительно
+    исходного контура и проверка, что ребра между сечениями проходят через O."""
+    xy = np.array(part['gap']['unit_xy'])[:len(P['gap_az'])]
+    g = np.array([np.sin(delta), 0.0, np.cos(delta)])
+    e1 = np.array([np.cos(delta), 0.0, -np.sin(delta)])
+    e2 = np.array([0.0, 1.0, 0.0])
+    p = g + np.outer(xy[:, 0], e1) + np.outer(xy[:, 1], e2)
+    u = p / np.linalg.norm(p, axis=1, keepdims=True)
+    az, c = to_sph(u)
+    err = max(np.abs(az - P['gap_az']).max(), np.abs(c - P['gap_c']).max())
+    pa, pb = part['gap']['h_a'] * p, part['gap']['h_b'] * p
+    cross = np.linalg.norm(np.cross(pa, pb), axis=1).max()   # 0, если точки коллинеарны с O
+    return float(err), float(cross)
+
+
 # ------------------------------------------------------------------------ main
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -207,6 +262,7 @@ def main():
     ap.add_argument('--width', type=float, default=1 / 3, help='ширина венца как доля внешнего конусного размера')
     ap.add_argument('--pair', choices=['12', '34'], default='12', help='какая пара строится')
     ap.add_argument('--out', default='models/z1_z2')
+    ap.add_argument('--kompas-pts', type=int, default=10, help='точек на эвольвенте для скрипта КОМПАС')
     args = ap.parse_args()
 
     z = args.z
@@ -260,6 +316,21 @@ def main():
     )
     with open(os.path.join(args.out, 'summary.json'), 'w', encoding='utf-8') as f:
         json.dump(summary, f, ensure_ascii=False, indent=2)
+
+    # профили для скрипта КОМПАС-3D (облегчённый контур, kompas-pts точек на боковую сторону)
+    Wk = make_outline(z_w, d_w, alpha, ha_ang, hf_ang, internal=False, n_flank=args.kompas_pts, n_tip=1, n_root=3)
+    Sk = make_outline(z_s, d_s, alpha, ha_ang, hf_ang, internal=True, n_flank=args.kompas_pts, n_tip=1, n_root=3)
+    parts = [kompas_part(names[0], 'external', z_w, d_w, Wk, r_in, r_out, c_bore, W['c_tip']),
+             kompas_part(names[1], 'internal', z_s, d_s, Sk, r_in, r_out, S['c_tip'], c_rim)]
+    for part, P, d in zip(parts, (Wk, Sk), (d_w, d_s)):
+        part['gap_check'] = dict(zip(('max_angle_error_rad', 'apex_collinearity_mm2'), check_gap_section(P, d, part)))
+        with open(os.path.join(args.out, 'kompas_%s.json' % part['name']), 'w', encoding='utf-8') as f:
+            json.dump(part, f, ensure_ascii=False)
+        xy = np.array(part['gap']['unit_xy'])
+        print("  КОМПАС %s: %d точек контура впадины, сечение h=R: x %.2f..%.2f, y %.2f..%.2f мм, ошибка %.1e рад, коллинеарность %.1e" %
+              (part['name'], len(xy), xy[:, 0].min() * r_out, xy[:, 0].max() * r_out,
+               xy[:, 1].min() * r_out, xy[:, 1].max() * r_out,
+               part['gap_check']['max_angle_error_rad'], part['gap_check']['apex_collinearity_mm2']))
 
     print("Пара %s: R = %.3f мм, ширина %.3f мм" % (args.pair, R, b))
     print("  основные конусы: колесо %.3f°, венец %.3f°" % (np.degrees(W['gb']), np.degrees(S['gb'])))

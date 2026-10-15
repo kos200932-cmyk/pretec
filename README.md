@@ -6,9 +6,10 @@
 
 ```
 pretec/
-├── models/z1_z2/     # пара Z1/Z2: STL и summary.json
+├── models/z1_z2/     # пара Z1/Z2: STL, summary.json, kompas_*.json
 ├── scripts/
-│   └── nutation_gears.py   # генератор (нужен только numpy)
+│   ├── nutation_gears.py   # генератор (нужен только numpy)
+│   └── kompas_build.py     # построение в КОМПАС-3D v21 (pywin32)
 ├── README.md
 └── .gitignore
 ```
@@ -52,6 +53,25 @@ python3 scripts/nutation_gears.py --pair 12 --out models/z1_z2
 
 - Обе сетки замкнутые, вырожденных треугольников нет.
 - Взаимное проникновение профилей при вращении пары (с нулевым боковым зазором): около 1 мкм, на уровне дискретизации. Контрольный сдвиг фазы на 5 мкм даёт десятки мкм, то есть проверка чувствительна.
+
+## Скрипт для КОМПАС-3D v21
+
+`scripts/kompas_build.py` строит венец как нативную деталь с деревом построения. Данные берёт из `models/z1_z2/kompas_z1_wheel.json` и `kompas_z2_crown.json`, которые создаёт `nutation_gears.py`.
+
+**Статус: не запускался на реальном КОМПАС.** Проверена только логика Python на заглушках (число отрезков и дуг в эскизах, порядок операций). Вызовы API (плоскость под углом, вырез по сечениям, круговой массив) могут потребовать правки.
+
+Нужно: Windows, 64-разрядный Python, `pip install pywin32`.
+
+```
+python scripts/kompas_build.py --diag
+python scripts/kompas_build.py models/z1_z2/kompas_z1_wheel.json --stage blank
+python scripts/kompas_build.py models/z1_z2/kompas_z1_wheel.json --stage gap
+python scripts/kompas_build.py models/z1_z2/kompas_z1_wheel.json --stage full --save z1_wheel.m3d
+```
+
+Этапы: `blank` (заготовка вращением), `gap` (плюс вырез одной впадины), `full` (плюс круговой массив). Ключи ориентации, если модель получилась зеркальной или плоскости наклонились не туда: `--tilt-sign -1`, `--flip-x`, `--flip-z`.
+
+Метод: боковые стороны зуба — конусы с вершиной O. Впадина вырезается по сечениям между двумя плоскостями, перпендикулярными образующей делительного конуса (все рёбра проходят через O). Сечения плоскостью, перпендикулярной оси, для венца Z2 не годятся: его конус 75,9°, дно впадин почти плоское.
 
 ## Упрощения (первая версия)
 
