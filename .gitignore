@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# Логи и временные файлы
+*.log
+*.tmp
+*.bak
+
+# Система и редакторы
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
